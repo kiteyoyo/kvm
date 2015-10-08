@@ -11,6 +11,9 @@ class Virsh(object) :
         self.table=dict()
         self.dirty=True
 
+    def getUser(self) :
+        return self.user
+
     def __update(self) :
         self.table.clear()
         result=os.popen('virsh list --all').read()
@@ -353,8 +356,9 @@ class VmTool(Stand) :
 class VirtInstall(VmTool) :
     message='./kvm_log/virtInstallMessage.log'
     error='./kvm_log/virtInstallError.log'
-    def __init(self, virsh) :
+    def __init__(self, virsh) :
         super(VirtInstall, self).__init__(virsh)
+        self.virsh=virsh
         self.variantNumber=0
 
     def __printParameter(self) :
@@ -371,7 +375,6 @@ class VirtInstall(VmTool) :
         elif self.network=='bridge=br0' :
             print 'Bridge'
 
-        
     def __getOsType(self) :
         if re.search('ubuntu', self.os) :
             return 'linux'
@@ -380,14 +383,14 @@ class VirtInstall(VmTool) :
     def __getInstance(self) :
         inst='virt-install --connect qemu:///system '
         if self.name!='default' :
-            inst+='--name '+getpass.getuser()+'_'+self.name
+            inst+='--name '+self.virsh.getUser()+'_'+self.name
         else :
             raise Exception('name is default')
         inst+=' --ram '+str(self.memory)
         inst+=' --vcpus '+str(self.cpu)
         inst+=' --cdrom '+VirtInstall.ios_path+self.os
         inst+=' --disk size='+str(self.disk_size)+',bus=virtio,format=qcow2'
-        inst+=',path='+VirtInstall.qcow2_path+getpass.getuser()+'_'+self.name+'.qcow2'
+        inst+=',path='+VirtInstall.qcow2_path+self.virsh.getUser()+'_'+self.name+'.qcow2'
         inst+=' --disk path=/var/lib/libvirt/images/virtio/virtio-win.iso,device=cdrom'
         inst+=' --os-variant='+VirtInstall.releaseList[self.release][1]
         inst+=' --force'
@@ -421,7 +424,6 @@ class VirtInstall(VmTool) :
             elif number==7 :
                 inst=self.__getInstance()+' > '+VirtInstall.message+' 2> '+VirtInstall.error+' &'
                 os.system(inst)
-                print inst
                 break
             elif number==8 :
                 break
@@ -433,9 +435,9 @@ class Vmbuilder(VmTool) :
     suite_dict={'ubuntu-12.04.5-alternate-amd64.iso':'precise', 'ubuntu-12.04.5-server-amd64.iso':'precise'}
     message='./kvm_log/vmbuilderMessage.log'
     error='./kvm_log/vmbuilderError.log'
-    def __init__(self, virsh, user) :
+    def __init__(self, virsh) :
         super(Vmbuilder, self).__init__(virsh)
-        self.user=user
+        self.virsh=virsh
         self.name='ubuntu'
         self.password='ubuntu'
         self.ip=''
@@ -480,7 +482,7 @@ class Vmbuilder(VmTool) :
     def __getInstance(self) :
         inst='vmbuilder kvm ubuntu '
         if self.name!='default' :
-            inst+='--name '+self.user+'_'+self.name+' --overwrite'
+            inst+='--name '+self.virsh.getUser()+'_'+self.name+' --overwrite'
         else :
             raise Exception('name is default')
         inst+=' -d '+VirtInstall.qcow2_path+self.user+'_'+self.name
@@ -555,6 +557,60 @@ class Vmbuilder(VmTool) :
             else :
                 print 'Please input 1 ~ 9.'
 
+class Clone(VmTool) :
+    # virt-clone --connect=qemu:///system -o CurrentVM -n NewVM -f /var/lib/libvirt/images/NewVM.gcow2
+    # sudo qemu-nbd --connect=/dev/nbd0 root_ubuntu14.04.qcow2
+    def __init__(self, virsh):
+        super(Clone, self).__init__(virsh)
+        self.virsh=virsh
+        self.nameList=virsh.getRSList()
+        self.source=0
+
+    def __printParameter(self) :
+        print 'Current parameter:'
+        print '\tName\t\t', self.name
+        print '\tSource VM\t',  self.nameList[self.source]
+
+    def __getInstance(self) :
+        inst='virt-clone --connect=qemu:///system'
+        inst+=' -o '+self.virsh.getUser()+'_'+self.nameList[self.source]
+        inst+=' -n '+self.virsh.getUser()+'_'+self.name
+        inst+=' -f '+Clone.qcow2_path+self.virsh.getUser()+'_'+self.name+'.qcow2'
+        return inst
+
+    def setSource(self) :
+        size=len(self.nameList)
+        for i in range(size) :
+            print str(i+1)+'\t'+self.nameList[i]
+        while True :
+            name=int(raw_input('input source VM number: '))
+            if number>0 and number<=size :
+                self.source=self.nameList[number]
+                break
+            if number==1 :
+                print 'Please input 1'
+            else :
+                print 'Please input 1 ~ '+str(size)
+
+    def create(self) :
+        self.setName()
+        while True :
+            self.__printParameter()
+            option=['Source VM', 'Correct', 'Quit']
+            self.standardPrint(option)
+            number=int(raw_input('Please choose number: '))
+            if number==1 :
+                self.setSource()
+            elif number==2 :
+                inst=self.__getInstance()+' > /dev/null 2> /dev/null &'
+                print inst
+                os.system(inst)
+                break
+            elif number==3 :
+                break
+            else :
+                print 'Please input 1 ~3.'
+
 class Management(Stand) :
 
     def __help(self) :
@@ -580,7 +636,7 @@ class Management(Stand) :
         else :
             user=getpass.getuser()
         vir=Virsh(user)
-        readline.set_completer(BufferCompleter(['help', 'list', 'quit', 'createAuto', 'createManual'], ['view', 'open', 'reboot', 'shutdown', 'turnoff', 'delete'], vir).complete)
+        readline.set_completer(BufferCompleter(['help', 'list', 'quit', 'createAuto', 'createManual', 'clone'], ['view', 'open', 'reboot', 'shutdown', 'turnoff', 'delete'], vir).complete)
         readline.parse_and_bind('tab: complete')
         while True :
             inp=raw_input(' >>> ')
@@ -594,14 +650,17 @@ class Management(Stand) :
                     name_list=vir.getList()
                     self.standardPrint(name_list)
                 elif com[0]=='createManual' :
-                    v=VirtInstall(vir)
-                    v.create()
+                    vi=VirtInstall(vir)
+                    vi.create()
                 elif com[0]=='createAuto' :
                     if os.geteuid()==0 :
-                        v=Vmbuilder(vir, user)
-                        v.create()
+                        vm=Vmbuilder(vir)
+                        vm.create()
                     else :
                         print '\tPlease run as root'
+                elif com[0]=='clone' :
+                    cl=Clone(vir)
+                    cl.create()
                 elif len(com)==2 :
                     if com[0]=='view' :
                         vir.virtViewer(com[1])
